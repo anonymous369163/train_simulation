@@ -166,8 +166,9 @@ class TrainSimulator:
                 for events in reversed(self.events):
                     if events[1] == "depart" and events[3]["end"] == next_end and events[2] != train_id:
                         if events[0] < planned_next_departure:
-                            if planed_next_arrival < datetime.strptime(events[3]["arrival_time"], "%H:%M:%S") + timedelta(minutes=3):
-                                planed_next_arrival = events[3]["arrival_time"] + timedelta(minutes=3)
+                            arrival_time = datetime.strptime(events[3]["arrival_time"], "%H:%M:%S")
+                            if planed_next_arrival < arrival_time + timedelta(minutes=3):
+                                planed_next_arrival = arrival_time + timedelta(minutes=3)
                             break
 
                 # 更新事件队列中相关的发车事件
