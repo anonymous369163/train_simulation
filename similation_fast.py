@@ -6,6 +6,7 @@ import matplotlib.colors as mcolors
 import matplotlib.dates as mdates
 import numpy as np
 import copy
+import pandas as pd
 
 class TrainSimulator:
     def __init__(self, schedule):
@@ -187,12 +188,13 @@ class TrainSimulator:
 
                 break
 
-    def plot_schedule(self, draw_planned=True):
+    def plot_schedule(self, draw_planned=True, draw_actual=True):
         """
         绘制列车运行时刻表，包括计划图和实际图，同时标记延误信息。
         同一列车的计划图和实际图使用一致的颜色。
         """
-        plt.figure(figsize=(14, 7))
+        if draw_planned or draw_actual:
+             plt.figure(figsize=(14, 7))
         stations = list(set([event["station"] for event in self.logs]))
         stations = np.sort([int(stations[i]) for i in range(len(stations))])
         stations = [str(i) for i in stations]
@@ -202,9 +204,11 @@ class TrainSimulator:
         colors = list(mcolors.TABLEAU_COLORS.values())
         train_colors = {train_id: colors[i % len(colors)] for i, train_id in enumerate(train_ids)}
 
+        actual_times_df = pd.DataFrame()
         for train_id in train_ids:
             # 实际运行数据
             actual_times = []
+            actual_times_hms = []
             actual_positions = []
             delays = []  # 延误时间记录
 
@@ -215,6 +219,7 @@ class TrainSimulator:
             for event in self.logs:
                 if event["train_id"] == train_id:
                     actual_times.append(event["time"])
+                    actual_times_hms.append(event["time"].strftime("%H:%M:%S"))
                     actual_positions.append(stations.index(event["station"]))
 
                     # 计算延误时间（实际时间与计划时间的差值，单位分钟）
@@ -233,27 +238,37 @@ class TrainSimulator:
                 plt.plot(planned_times, planned_positions, linestyle='--', color=train_color, label=f"{train_id} - plan")
 
             # 绘制实际图（实线）
-            plt.plot(actual_times, actual_positions, marker='o', color=train_color, label=f"{train_id} - actual")
+            if draw_actual:
+                plt.plot(actual_times, actual_positions, marker='o', color=train_color, label=f"{train_id} - actual")
+
+            # 将实际到达时间转换为Series并添加到DataFrame中
+            # 使用车站索引作为行索引，列车ID作为列名
+            actual_times_series = pd.Series(actual_times_hms, index=actual_positions, name=train_id)
+            actual_times_df = pd.concat([actual_times_df, actual_times_series], axis=1)
+
 
             # 标记延误信息
-            for t, p, d in zip(actual_times, actual_positions, delays):
-                if d > 0:
-                    plt.text(t, p, f"+{int(d)}'", color="red", fontsize=9, ha='left', va='bottom')
-                elif d < 0:
-                    plt.text(t, p, f"{int(d)}'", color="blue", fontsize=9, ha='left', va='bottom')
+            if draw_planned or draw_actual:
+                for t, p, d in zip(actual_times, actual_positions, delays):
+                    if d > 0:
+                        plt.text(t, p, f"+{int(d)}'", color="red", fontsize=9, ha='left', va='bottom')
+                    elif d < 0:
+                        plt.text(t, p, f"{int(d)}'", color="blue", fontsize=9, ha='left', va='bottom')
 
         # 格式化横坐标时间
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        plt.gca().xaxis.set_major_locator(mdates.MinuteLocator(interval=10))  # 10分钟间隔
+        if draw_planned or draw_actual:
+            plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+            plt.gca().xaxis.set_major_locator(mdates.MinuteLocator(interval=10))  # 10分钟间隔
 
-        plt.yticks(range(len(stations)), stations)
-        plt.xlabel("Time")
-        plt.ylabel("Station")
-        plt.title("Train schedule (plan vs actual)")
-        plt.legend()
-        plt.grid()
-        plt.tight_layout()
-        plt.show()
+            plt.yticks(range(len(stations)), stations)
+            plt.xlabel("Time")
+            plt.ylabel("Station")
+            plt.title("Train schedule (plan vs actual)")
+            plt.legend()
+            plt.grid()
+            plt.tight_layout()
+            plt.show()
+        return actual_times_df
 
 
 def find_departure_times(schedule, train_id, start_station=None, end_station=None):
@@ -323,9 +338,8 @@ def convert_df_to_schedule(timetable_df, now=8*60):
 
     return schedule
 
-
-import pandas as pd
 # 导入示例时刻表
+save = True
 path = './simulation_fast_inst/'
 dao = pd.read_csv(path + 'DAO.csv')
 fa = pd.read_csv(path + 'FA.csv')
@@ -349,4 +363,10 @@ schedule = convert_df_to_schedule(df)
 # 运行仿真
 simulator = TrainSimulator(schedule)
 simulator.simulate()
-simulator.plot_schedule(draw_planned=False)
+actual_times_df = simulator.plot_schedule(draw_planned=False, draw_actual=False)  # draw_planned=True 绘制计划图
+# 请输出运行结果
+print(actual_times_df)
+actual_times_df
+if save:
+    actual_times_df.to_csv(path + 'actual_times.csv')
+
