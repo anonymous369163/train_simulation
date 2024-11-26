@@ -7,6 +7,11 @@ import matplotlib.dates as mdates
 import numpy as np
 import copy
 import pandas as pd
+from itertools import count
+
+# 全局计数器
+event_counter = count()
+
 
 class TrainSimulator:
     def __init__(self, schedule):
@@ -25,8 +30,11 @@ class TrainSimulator:
         for item in schedule:
             train_id = item["train_id"]
             dep_time = datetime.strptime(item["departure_time"], "%H:%M:%S")
+            # 离开时间里加入随机的秒，避免多个列车同时发车
+            dep_time += timedelta(seconds=random.randint(1, 59))
             arr_time = datetime.strptime(item["arrival_time"], "%H:%M:%S")
-            heapq.heappush(self.events, (dep_time, "depart", train_id, item))
+            sequence = next(event_counter)  # 获取当前事件的序列号
+            heapq.heappush(self.events, (dep_time, sequence, "depart", train_id, item))
             # 如果self.trains中不存在train_id，则添加一个新的列车状态
             if train_id not in self.trains:
                 self.trains[train_id] = {
@@ -36,17 +44,37 @@ class TrainSimulator:
                     "status": "waiting",
                 }
 
+        # while self.events:
+        #     # 取出最早的事件
+        #     event_time, event_type, train_id, event_data = heapq.heappop(self.events)
+        #     print(f"当前时间：{event_time}, 事件：{event_type}, 列车：{train_id}, 事件数据：{event_data}")
+        #
+        # print('hello')
+
+    def log_event_queue(self, event_queue, train_id=None):
+        print("Current Event Queue:")
+        for event in sorted(event_queue):
+            if train_id is not None:
+                if event[3] == train_id:
+                    print(event)
+            else:
+                print(event)
+
     def simulate(self):
         """
         开始仿真
         """
         while self.events:
             # 取出最早的事件
-            event_time, event_type, train_id, event_data = heapq.heappop(self.events)
+            event_time, _,  event_type, train_id, event_data = heapq.heappop(self.events)
             self.current_time = event_time
-
+            print(f"当前时间：{self.current_time}, 事件：{event_type}, 列车：{train_id}, 事件数据：{event_data}")
+            self.log_event_queue(self.events, 'T6')   # debug use
             # 当运行到这个列车的事件后，所有后续列车全部都删除
-            self.events = [ev for ev in self.events if not ev[2] == train_id]
+            self.events = [ev for ev in self.events if not ev[3] == train_id]
+
+            # 使用 heapify 重新构建堆
+            heapq.heapify(self.events)
 
             if event_type == "depart":
                 self.handle_departure(train_id, event_data)
@@ -72,7 +100,7 @@ class TrainSimulator:
 
                 # 同时保证列车的到站时间满足越行约束
                 for item in self.events:
-                    if item[2] == log["train_id"] and item[1] == "arrive" and item[3]["end"] == section[1]:
+                    if item[3] == log["train_id"] and item[2] == "arrive" and item[4]["end"] == section[1]:
                         planned_headway = item[0] + timedelta(minutes=3)
                 break
 
@@ -111,7 +139,9 @@ class TrainSimulator:
             actual_arrival_time = planned_headway
 
         # 添加到站事件
-        heapq.heappush(self.events, (actual_arrival_time, "arrive", train_id, event_data))
+        actual_arrival_time += timedelta(seconds=random.randint(1, 59))
+        sequence = next(event_counter)  # 获取当前事件的序列号
+        heapq.heappush(self.events, (actual_arrival_time, sequence, "arrive", train_id, event_data))
         self.trains[train_id]["next_arrival_time"] = actual_arrival_time
 
     def handle_arrival(self, train_id, event_data):
@@ -165,15 +195,17 @@ class TrainSimulator:
                 planed_next_arrival = planed_next_operation_time + planned_next_departure
                 # 保证新生成的事件的到站时间满足越行约束
                 for events in reversed(self.events):
-                    if events[1] == "depart" and events[3]["end"] == next_end and events[2] != train_id:
+                    if events[2] == "depart" and events[4]["end"] == next_end and events[3] != train_id:
                         if events[0] < planned_next_departure:
-                            arrival_time = datetime.strptime(events[3]["arrival_time"], "%H:%M:%S")
+                            arrival_time = datetime.strptime(events[4]["arrival_time"], "%H:%M:%S")
                             if planed_next_arrival < arrival_time + timedelta(minutes=3):
                                 planed_next_arrival = arrival_time + timedelta(minutes=3)
                             break
 
                 # 更新事件队列中相关的发车事件
-                new_event = (planned_next_departure, "depart", train_id, {
+                sequence = next(event_counter)  # 获取当前事件的序列号
+                planned_next_departure += timedelta(seconds=random.randint(1, 59))
+                new_event = (planned_next_departure, sequence, "depart", train_id, {
                     "start": next_start,
                     "end": next_end,
                     "departure_time": planned_next_departure.strftime("%H:%M:%S"),
@@ -182,8 +214,10 @@ class TrainSimulator:
 
                 # 过滤掉旧的发车事件并插入新的事件
                 self.events = [
-                    ev for ev in self.events if not (ev[1] == "depart" and ev[2] == train_id)
+                    ev for ev in self.events if not (ev[2] == "depart" and ev[3] == train_id)
                 ]
+                # 使用 heapify 重新构建堆
+                heapq.heapify(self.events)
                 heapq.heappush(self.events, new_event)
 
                 break
@@ -245,7 +279,6 @@ class TrainSimulator:
             # 使用车站索引作为行索引，列车ID作为列名
             actual_times_series = pd.Series(actual_times_hms, index=actual_positions, name=train_id)
             actual_times_df = pd.concat([actual_times_df, actual_times_series], axis=1)
-
 
             # 标记延误信息
             if draw_planned or draw_actual:
@@ -347,7 +380,6 @@ df = pd.DataFrame(0, index=range(dao.shape[0]*2), columns=[f'T{i+1}' for i in ra
 df.iloc[::2] = dao.values
 df.iloc[1::2] = fa.values
 df.index = [f'{i//2+1}' if i % 2 == 0 else f'{i//2+1}' for i in range(df.shape[0])]
-schedule = convert_df_to_schedule(df)
 # # 示例时刻表
 # schedule = [
 #     {"train_id": "T1", "start": "A", "end": "B", "departure_time": "08:00:00", "arrival_time": "08:30:00"},
@@ -362,9 +394,10 @@ schedule = convert_df_to_schedule(df)
 # schedule = [item for item in schedule if item['train_id'] == 'T2' or item['train_id'] == 'T3']
 # 运行仿真
 for each_simu in range(10):
+    schedule = convert_df_to_schedule(df)
     simulator = TrainSimulator(schedule)
     simulator.simulate()
-    actual_times_df = simulator.plot_schedule(draw_planned=False, draw_actual=False)  # draw_planned=True 绘制计划图
+    actual_times_df = simulator.plot_schedule(draw_planned=False, draw_actual=True)  # draw_planned=True 绘制计划图
     # 请输出运行结果
     # print(actual_times_df)  # 输出实际运行时间
     if save:
