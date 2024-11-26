@@ -348,7 +348,7 @@ df.iloc[::2] = dao.values
 df.iloc[1::2] = fa.values
 df.index = [f'{i//2+1}' if i % 2 == 0 else f'{i//2+1}' for i in range(df.shape[0])]
 schedule = convert_df_to_schedule(df)
-# # 示例时刻表（更复杂）
+# # 示例时刻表
 # schedule = [
 #     {"train_id": "T1", "start": "A", "end": "B", "departure_time": "08:00:00", "arrival_time": "08:30:00"},
 #     {"train_id": "T1", "start": "B", "end": "C", "departure_time": "08:40:00", "arrival_time": "09:10:00"},
@@ -361,12 +361,13 @@ schedule = convert_df_to_schedule(df)
 # 把只有train_id为T2的列车时间提取出来
 # schedule = [item for item in schedule if item['train_id'] == 'T2' or item['train_id'] == 'T3']
 # 运行仿真
-simulator = TrainSimulator(schedule)
-simulator.simulate()
-actual_times_df = simulator.plot_schedule(draw_planned=False, draw_actual=False)  # draw_planned=True 绘制计划图
-# 请输出运行结果
-print(actual_times_df)
-actual_times_df
-if save:
-    actual_times_df.to_csv(path + 'actual_times.csv')
+for each_simu in range(10):
+    simulator = TrainSimulator(schedule)
+    simulator.simulate()
+    actual_times_df = simulator.plot_schedule(draw_planned=False, draw_actual=False)  # draw_planned=True 绘制计划图
+    # 请输出运行结果
+    # print(actual_times_df)  # 输出实际运行时间
+    if save:
+        actual_times_df.to_csv(path + 'actual_schedule_'+str(each_simu)+'.csv')
+    print(f"模拟{each_simu+1}次完成")
 
