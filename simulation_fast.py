@@ -223,7 +223,7 @@ class TrainSimulator:
 
                 break
 
-    def plot_schedule(self, draw_planned=True, draw_actual=True):
+    def plot_schedule(self, draw_planned=True, draw_actual=True, dynamic_y=True, save_fig=False):
         """
         绘制列车运行时刻表，包括计划图和实际图，同时标记延误信息。
         同一列车的计划图和实际图使用一致的颜色。
@@ -235,13 +235,14 @@ class TrainSimulator:
         stations = [str(i) for i in stations]
         train_ids = list(set([event["train_id"] for event in self.logs]))
 
-        # 动态计算区间长度
-        avg_section_times = self.calculate_avg_section_times()
-        stations_offsets = {stations[0]: 0}  # 第一个站点的偏移量为 0
-        for i in range(1, len(stations)):
-            section = (stations[i - 1], stations[i])
-            offset = avg_section_times.get(section, 10)  # 默认最小间隔 10
-            stations_offsets[stations[i]] = stations_offsets[stations[i - 1]] + offset
+        if dynamic_y:
+            # 动态计算区间长度
+            avg_section_times = self.calculate_avg_section_times()
+            stations_offsets = {stations[0]: 0}  # 第一个站点的偏移量为 0
+            for i in range(1, len(stations)):
+                section = (stations[i - 1], stations[i])
+                offset = avg_section_times.get(section, 10)  # 默认最小间隔 10
+                stations_offsets[stations[i]] = stations_offsets[stations[i - 1]] + offset
 
         # 为每辆列车分配固定颜色
         colors = list(mcolors.TABLEAU_COLORS.values())
@@ -263,8 +264,10 @@ class TrainSimulator:
                 if event["train_id"] == train_id:
                     actual_times.append(event["time"])
                     actual_times_hms.append(event["time"].strftime("%H:%M:%S"))
-                    # actual_positions.append(stations.index(event["station"]))
-                    actual_positions.append(stations_offsets[event["station"]])
+                    if not dynamic_y:
+                        actual_positions.append(stations.index(event["station"]))
+                    else:
+                        actual_positions.append(stations_offsets[event["station"]])
 
                     # 计算延误时间（实际时间与计划时间的差值，单位分钟）
                     planned_time = datetime.strptime(event["planned_time"], "%H:%M:%S")
@@ -272,8 +275,10 @@ class TrainSimulator:
                     delays.append(delay)
 
                     planned_times.append(planned_time)
-                    # planned_positions.append(stations.index(event["station"]))
-                    planned_positions.append(stations_offsets[event["station"]])
+                    if not dynamic_y:
+                        planned_positions.append(stations.index(event["station"]))
+                    else:
+                        planned_positions.append(stations_offsets[event["station"]])
 
             # 获取该列车的颜色
             train_color = train_colors[train_id]
@@ -310,7 +315,7 @@ class TrainSimulator:
             actual_times_df = pd.concat([actual_times_df, actual_times_series], axis=1)
 
             # 标记延误信息
-            if draw_planned or draw_actual:
+            if draw_actual:
                 for t, p, d in zip(actual_times, actual_positions, delays):
                     if d > 0:
                         plt.text(t, p, f"+{int(d)}'", color="red", fontsize=9, ha='left', va='bottom')
@@ -322,15 +327,19 @@ class TrainSimulator:
             plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
             plt.gca().xaxis.set_major_locator(mdates.MinuteLocator(interval=10))  # 10分钟间隔
 
-            # plt.yticks(range(len(stations)), stations)
-            plt.yticks([stations_offsets[station] for station in stations], stations)
+            if not dynamic_y:
+                plt.yticks(range(len(stations)), stations)
+            else:
+                plt.yticks([stations_offsets[station] for station in stations], stations)
             plt.xlabel("Time")
             plt.ylabel("Station")
-            plt.title("Train schedule (plan vs actual)")
+            plt.title("Train schedule")
             plt.legend()
             plt.grid()
             plt.tight_layout()
             plt.show()
+            if save_fig:
+                plt.savefig(path + 'train_schedule.png')
         return actual_times_df
 
     def calculate_avg_section_times(self):
