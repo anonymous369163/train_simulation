@@ -278,6 +278,24 @@ class TrainSimulator:
             # 将实际到达时间转换为Series并添加到DataFrame中
             # 使用车站索引作为行索引，列车ID作为列名
             actual_times_series = pd.Series(actual_times_hms, index=actual_positions, name=train_id)
+            # 如果actual_times_series的长度不够，则用nan填充
+            if len(actual_times_series) < (len(stations)-1)*2:
+                actual_times_series_2 = pd.Series(name=train_id, dtype=object).reindex_like(actual_times_df)
+                # 把相同index的元素赋值给actual_times_series_2
+                ss = 0
+                tip = 1
+                for ii in range(len(actual_times_series_2)):
+                    if actual_times_series_2.index[ii] in actual_times_series.index:
+                        if tip:
+                            tip = 0
+                        else:
+                            actual_times_series_2.iloc[ii] = actual_times_series.iloc[ss]
+                            ss += 1
+                    else:
+                        tip = 1
+
+                actual_times_series = actual_times_series_2
+
             actual_times_df = pd.concat([actual_times_df, actual_times_series], axis=1)
 
             # 标记延误信息
@@ -316,19 +334,27 @@ def find_departure_times(schedule, train_id, start_station=None, end_station=Non
 
 def minutes_to_hms(minutes):
     # 将分钟转换为 timedelta 对象
-    time_delta = timedelta(minutes=minutes.astype(float))
+    # 如果minites为float64类型，先转化为float类型，否则不做处理
+    if pd.api.types.is_float_dtype(minutes):
+        minutes = minutes.astype(float)
 
-    # 计算总秒数
-    total_seconds = int(time_delta.total_seconds())
+    # 如果数据是nan，则返回nan
+    if pd.isnull(minutes):
+        return np.nan
+    else:
+        time_delta = timedelta(minutes=minutes)
 
-    # 计算小时、分钟和秒
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
+        # 计算总秒数
+        total_seconds = int(time_delta.total_seconds())
 
-    # 格式化为 "H:M:S" 字符串
-    time_string = f"{hours:02}:{minutes:02}:{seconds:02}"
+        # 计算小时、分钟和秒
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
 
-    return time_string
+        # 格式化为 "H:M:S" 字符串
+        time_string = f"{hours:02}:{minutes:02}:{seconds:02}"
+
+        return time_string
 
 
 def convert_df_to_schedule(timetable_df, now=8*60):
@@ -356,51 +382,59 @@ def convert_df_to_schedule(timetable_df, now=8*60):
             departure_time = train_schedule.iloc[i]
             arrival_time = train_schedule.iloc[i + 1]
 
+            # 如果deparure_time是数值，则不做处理，如果是字符串，则需要将字符串转化为分钟数
+            if isinstance(departure_time, str):
+                departure_time = datetime.strptime(departure_time, "%H:%M:%S").hour*60. + datetime.strptime(departure_time, "%H:%M:%S").minute
+                arrival_time = datetime.strptime(arrival_time, "%H:%M:%S").hour*60. + datetime.strptime(arrival_time, "%H:%M:%S").minute
+
             # 将departure_time 和 arrival_time 是数值，先转化为datetime格式, 再转化为字符串格式
             departure_time = minutes_to_hms(departure_time+now)
             arrival_time = minutes_to_hms(arrival_time+now)
 
             # 将每个区间的信息保存为字典
-            schedule.append({
-                "train_id": train_id,
-                "start": start_station,
-                "end": end_station,
-                "departure_time": departure_time,
-                "arrival_time": arrival_time
-            })
+            if departure_time is not np.nan and arrival_time is not np.nan:
+                schedule.append({
+                    "train_id": train_id,
+                    "start": start_station,
+                    "end": end_station,
+                    "departure_time": departure_time,
+                    "arrival_time": arrival_time
+                })
 
     return schedule
 
-# 导入示例时刻表
-save = True
-path = './simulation_fast_inst/'
-dao = pd.read_csv(path + 'DAO.csv')
-fa = pd.read_csv(path + 'FA.csv')
-df = pd.DataFrame(0, index=range(dao.shape[0]*2), columns=[f'T{i+1}' for i in range(dao.shape[1])])
-df.iloc[::2] = dao.values
-df.iloc[1::2] = fa.values
-df.index = [f'{i//2+1}' if i % 2 == 0 else f'{i//2+1}' for i in range(df.shape[0])]
-# # 示例时刻表
-# schedule = [
-#     {"train_id": "T1", "start": "A", "end": "B", "departure_time": "08:00:00", "arrival_time": "08:30:00"},
-#     {"train_id": "T1", "start": "B", "end": "C", "departure_time": "08:40:00", "arrival_time": "09:10:00"},
-#     {"train_id": "T2", "start": "A", "end": "B", "departure_time": "08:20:00", "arrival_time": "08:50:00"},
-#     {"train_id": "T2", "start": "B", "end": "C", "departure_time": "09:00:00", "arrival_time": "09:30:00"},
-#     {"train_id": "T3", "start": "C", "end": "D", "departure_time": "08:50:00", "arrival_time": "09:20:00"},
-#     {"train_id": "T4", "start": "D", "end": "E", "departure_time": "09:30:00", "arrival_time": "10:00:00"},
-# ]
 
-# 把只有train_id为T2的列车时间提取出来
-# schedule = [item for item in schedule if item['train_id'] == 'T2' or item['train_id'] == 'T3']
-# 运行仿真
-for each_simu in range(10):
+if __name__ == "__main__":
+    # 导入示例时刻表
+    save = True
+    path = './simulation_fast_inst/'
+    dao = pd.read_csv(path + 'DAO.csv')
+    fa = pd.read_csv(path + 'FA.csv')
+    df = pd.DataFrame(0, index=range(dao.shape[0]*2), columns=[f'T{i+1}' for i in range(dao.shape[1])])
+    df.iloc[::2] = dao.values
+    df.iloc[1::2] = fa.values
+    df.index = [f'{i//2+1}' for i in range(df.shape[0])]
     schedule = convert_df_to_schedule(df)
-    simulator = TrainSimulator(schedule)
-    simulator.simulate()
-    actual_times_df = simulator.plot_schedule(draw_planned=False, draw_actual=True)  # draw_planned=True 绘制计划图
-    # 请输出运行结果
-    # print(actual_times_df)  # 输出实际运行时间
-    if save:
-        actual_times_df.to_csv(path + 'actual_schedule_'+str(each_simu)+'.csv')
-    print(f"模拟{each_simu+1}次完成")
+    # # 示例时刻表
+    # schedule = [
+    #     {"train_id": "T1", "start": "A", "end": "B", "departure_time": "08:00:00", "arrival_time": "08:30:00"},
+    #     {"train_id": "T1", "start": "B", "end": "C", "departure_time": "08:40:00", "arrival_time": "09:10:00"},
+    #     {"train_id": "T2", "start": "A", "end": "B", "departure_time": "08:20:00", "arrival_time": "08:50:00"},
+    #     {"train_id": "T2", "start": "B", "end": "C", "departure_time": "09:00:00", "arrival_time": "09:30:00"},
+    #     {"train_id": "T3", "start": "C", "end": "D", "departure_time": "08:50:00", "arrival_time": "09:20:00"},
+    #     {"train_id": "T4", "start": "D", "end": "E", "departure_time": "09:30:00", "arrival_time": "10:00:00"},
+    # ]
+
+    # 把只有train_id为T2的列车时间提取出来
+    # schedule = [item for item in schedule if item['train_id'] == 'T2' or item['train_id'] == 'T3']
+    # 运行仿真
+    for each_simu in range(10):
+        simulator = TrainSimulator(schedule)
+        simulator.simulate()
+        actual_times_df = simulator.plot_schedule(draw_planned=False, draw_actual=True)  # draw_planned=True 绘制计划图
+        # 请输出运行结果
+        # print(actual_times_df)  # 输出实际运行时间
+        if save:
+            actual_times_df.to_csv(path + 'actual_schedule_'+str(each_simu)+'.csv')
+        print(f"模拟{each_simu+1}次完成")
 
