@@ -8,6 +8,7 @@ import numpy as np
 import copy
 import pandas as pd
 from itertools import count
+from collections import defaultdict
 
 # 全局计数器
 event_counter = count()
@@ -234,6 +235,14 @@ class TrainSimulator:
         stations = [str(i) for i in stations]
         train_ids = list(set([event["train_id"] for event in self.logs]))
 
+        # 动态计算区间长度
+        avg_section_times = self.calculate_avg_section_times()
+        stations_offsets = {stations[0]: 0}  # 第一个站点的偏移量为 0
+        for i in range(1, len(stations)):
+            section = (stations[i - 1], stations[i])
+            offset = avg_section_times.get(section, 10)  # 默认最小间隔 10
+            stations_offsets[stations[i]] = stations_offsets[stations[i - 1]] + offset
+
         # 为每辆列车分配固定颜色
         colors = list(mcolors.TABLEAU_COLORS.values())
         train_colors = {train_id: colors[i % len(colors)] for i, train_id in enumerate(train_ids)}
@@ -254,7 +263,8 @@ class TrainSimulator:
                 if event["train_id"] == train_id:
                     actual_times.append(event["time"])
                     actual_times_hms.append(event["time"].strftime("%H:%M:%S"))
-                    actual_positions.append(stations.index(event["station"]))
+                    # actual_positions.append(stations.index(event["station"]))
+                    actual_positions.append(stations_offsets[event["station"]])
 
                     # 计算延误时间（实际时间与计划时间的差值，单位分钟）
                     planned_time = datetime.strptime(event["planned_time"], "%H:%M:%S")
@@ -262,7 +272,8 @@ class TrainSimulator:
                     delays.append(delay)
 
                     planned_times.append(planned_time)
-                    planned_positions.append(stations.index(event["station"]))
+                    # planned_positions.append(stations.index(event["station"]))
+                    planned_positions.append(stations_offsets[event["station"]])
 
             # 获取该列车的颜色
             train_color = train_colors[train_id]
@@ -311,7 +322,8 @@ class TrainSimulator:
             plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
             plt.gca().xaxis.set_major_locator(mdates.MinuteLocator(interval=10))  # 10分钟间隔
 
-            plt.yticks(range(len(stations)), stations)
+            # plt.yticks(range(len(stations)), stations)
+            plt.yticks([stations_offsets[station] for station in stations], stations)
             plt.xlabel("Time")
             plt.ylabel("Station")
             plt.title("Train schedule (plan vs actual)")
@@ -320,6 +332,27 @@ class TrainSimulator:
             plt.tight_layout()
             plt.show()
         return actual_times_df
+
+    def calculate_avg_section_times(self):
+        """
+        根据时刻表计算各区间的平均运行时间。
+        """
+        schedule = self.schedule
+
+        section_times = defaultdict(list)
+
+        for event in schedule:
+            start = event["start"]
+            end = event["end"]
+            departure_time = datetime.strptime(event["departure_time"], "%H:%M:%S")
+            arrival_time = datetime.strptime(event["arrival_time"], "%H:%M:%S")
+            duration = (arrival_time - departure_time).total_seconds() / 60  # 转化为分钟
+            section_times[(start, end)].append(duration)
+
+        avg_section_times = {
+            section: np.mean(times) for section, times in section_times.items()
+        }
+        return avg_section_times
 
 
 def find_departure_times(schedule, train_id, start_station=None, end_station=None):
@@ -337,6 +370,9 @@ def minutes_to_hms(minutes):
     # 如果minites为float64类型，先转化为float类型，否则不做处理
     if pd.api.types.is_float_dtype(minutes):
         minutes = minutes.astype(float)
+
+    # 如果数据为整形，则变为浮点型
+    minutes = float(minutes)
 
     # 如果数据是nan，则返回nan
     if pd.isnull(minutes):
@@ -402,6 +438,7 @@ def convert_df_to_schedule(timetable_df, now=8*60):
                 })
 
     return schedule
+
 
 
 if __name__ == "__main__":
