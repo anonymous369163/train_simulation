@@ -15,7 +15,7 @@ event_counter = count()
 
 
 class TrainSimulator:
-    def __init__(self, schedule):
+    def __init__(self, schedule, low=0, high=5):
         """
         初始化列车仿真器
         :param schedule: 列车时刻表，格式为列表，每个元素是一个字典
@@ -26,6 +26,8 @@ class TrainSimulator:
         self.current_time = datetime.now()
         self.trains = {}  # 记录每辆列车的状态
         self.logs = []  # 用于绘图的日志记录
+        self.low = low  # 最低延误分钟数
+        self.high = high  # 最高延误分钟数
 
         # 初始化事件队列
         for item in schedule:
@@ -124,7 +126,7 @@ class TrainSimulator:
         self.trains[train_id]["status"] = "on the way"
 
         # 计算实际到达时间（加上一个随机干扰）
-        delay = random.randint(-5, 10)  # 随机延误，单位分钟
+        delay = random.randint(self.low, self.high)  # 随机延误，单位分钟
         actual_arrival_time = planned_departure_time + planned_operation_time + timedelta(minutes=delay)  # 按照计划来跑，不存在最短运行时间，赶点的情况
 
         # 检查到站间隔约束（与前一列车至少相隔 3 分钟）
@@ -454,8 +456,8 @@ if __name__ == "__main__":
     # 导入示例时刻表
     save = True
     path = './simulation_fast_inst/'
-    dao = pd.read_csv(path + 'DAO.csv')
-    fa = pd.read_csv(path + 'FA.csv')
+    dao = pd.read_csv(path + 'DAO.csv', header=None)
+    fa = pd.read_csv(path + 'FA.csv', header=None)
     df = pd.DataFrame(0, index=range(dao.shape[0]*2), columns=[f'T{i+1}' for i in range(dao.shape[1])])
     df.iloc[::2] = dao.values
     df.iloc[1::2] = fa.values
