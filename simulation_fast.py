@@ -126,7 +126,14 @@ class TrainSimulator:
         self.trains[train_id]["status"] = "on the way"
 
         # 计算实际到达时间（加上一个随机干扰）
-        delay = random.randint(self.low, self.high)  # 随机延误，单位分钟
+        # delay = random.randint(self.low, self.high)  # 随机延误，单位分钟
+        # 加入服从对数正态分布的随机干扰
+        delay = np.random.lognormal(2.76695, 1.18678*3)//60  # 单位分钟
+        if delay < self.low:
+            delay = self.low
+        elif delay > self.high:
+            delay = self.high
+
         actual_arrival_time = planned_departure_time + planned_operation_time + timedelta(minutes=delay)  # 按照计划来跑，不存在最短运行时间，赶点的情况
 
         # 检查到站间隔约束（与前一列车至少相隔 3 分钟）
@@ -225,7 +232,7 @@ class TrainSimulator:
 
                 break
 
-    def plot_schedule(self, draw_planned=True, draw_actual=True, dynamic_y=True, save_fig=False):
+    def plot_schedule(self, draw_planned=True, draw_actual=True, dynamic_y=True, save_fig=False, file_name='train_schedule.png'):
         """
         绘制列车运行时刻表，包括计划图和实际图，同时标记延误信息。
         同一列车的计划图和实际图使用一致的颜色。
@@ -326,8 +333,14 @@ class TrainSimulator:
 
         # 格式化横坐标时间
         if draw_planned or draw_actual:
+            min_time = min(event["time"] for event in self.logs).replace(second=0, microsecond=0)
+            max_time = max(event["time"] for event in self.logs).replace(second=0, microsecond=0)
+            time_range = pd.date_range(min_time, max_time, freq="10T")  # 1分钟间隔
+            plt.gca().set_xticks(time_range)
             plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-            plt.gca().xaxis.set_major_locator(mdates.MinuteLocator(interval=10))  # 10分钟间隔
+
+            # plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+            # plt.gca().xaxis.set_major_locator(mdates.MinuteLocator(interval=10))  # 10分钟间隔
 
             if not dynamic_y:
                 plt.yticks(range(len(stations)), stations)
@@ -341,7 +354,7 @@ class TrainSimulator:
             plt.tight_layout()
             plt.show()
             if save_fig:
-                plt.savefig(path + 'train_schedule.png')
+                plt.savefig(file_name)
         return actual_times_df
 
     def calculate_avg_section_times(self):
