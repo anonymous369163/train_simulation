@@ -28,6 +28,7 @@ class TrainSimulator:
         self.logs = []  # 用于绘图的日志记录
         self.low = low  # 最低延误分钟数
         self.high = high  # 最高延误分钟数
+        self.continue_plot = False  # 连续绘图标志位
 
         # 初始化事件队列
         for item in schedule:
@@ -232,19 +233,21 @@ class TrainSimulator:
 
                 break
 
-    def plot_schedule(self, draw_planned=True, draw_actual=True, dynamic_y=True, save_fig=False, file_name='train_schedule.png'):
+    def plot_schedule(self, draw_planned=True, draw_actual=True, dynamic_y=True, save_fig=False, file_name='train_schedule.png', line_type='-'):
         """
         绘制列车运行时刻表，包括计划图和实际图，同时标记延误信息。
         同一列车的计划图和实际图使用一致的颜色。
         """
-        if draw_planned or draw_actual:
+        if (draw_planned or draw_actual) and not self.continue_plot:
              plt.figure(figsize=(14, 7))
         stations = list(set([event["station"] for event in self.logs]))
         stations = np.sort([int(stations[i]) for i in range(len(stations))])
         stations = [str(i) for i in stations]
-        train_ids = list(set([event["train_id"] for event in self.logs]))
+        train_ids = sorted(list(set([event["train_id"] for event in self.logs])))
+        # 按照列车名字后面的数字进行排序
+        train_ids = sorted(train_ids, key=lambda x: int(x.split('T')[-1]))
 
-        if dynamic_y:
+        if dynamic_y and not self.continue_plot:
             # 动态计算区间长度
             avg_section_times = self.calculate_avg_section_times()
             stations_offsets = {stations[0]: 0}  # 第一个站点的偏移量为 0
@@ -252,6 +255,10 @@ class TrainSimulator:
                 section = (stations[i - 1], stations[i])
                 offset = avg_section_times.get(section, 10)  # 默认最小间隔 10
                 stations_offsets[stations[i]] = stations_offsets[stations[i - 1]] + offset
+            self.stations_offsets = stations_offsets
+
+        if self.continue_plot and hasattr(self, "stations_offsets"):
+            stations_offsets = self.stations_offsets
 
         # 为每辆列车分配固定颜色
         colors = list(mcolors.TABLEAU_COLORS.values())
@@ -294,7 +301,7 @@ class TrainSimulator:
 
             # 绘制计划图（虚线）
             if draw_planned:
-                plt.plot(planned_times, planned_positions, linestyle='--', color=train_color, label=f"{train_id} - plan")
+                plt.plot(planned_times, planned_positions, linestyle=line_type, color=train_color, label=f"{train_id}")  # - plan
 
             # 绘制实际图（实线）
             if draw_actual:
@@ -332,7 +339,7 @@ class TrainSimulator:
                         plt.text(t, p, f"{int(d)}'", color="blue", fontsize=9, ha='left', va='bottom')
 
         # 格式化横坐标时间
-        if draw_planned or draw_actual:
+        if draw_planned or draw_actual and not self.continue_plot:
             min_time = min(event["time"] for event in self.logs).replace(second=0, microsecond=0)
             max_time = max(event["time"] for event in self.logs).replace(second=0, microsecond=0)
             time_range = pd.date_range(min_time, max_time, freq="10T")  # 1分钟间隔
@@ -346,15 +353,17 @@ class TrainSimulator:
                 plt.yticks(range(len(stations)), stations)
             else:
                 plt.yticks([stations_offsets[station] for station in stations], stations)
-            plt.xlabel("Time")
-            plt.ylabel("Station")
-            plt.title("Train schedule")
-            plt.legend()
-            plt.grid()
-            plt.tight_layout()
-            plt.show()
-            if save_fig:
-                plt.savefig(file_name)
+            if file_name is not None:
+                plt.xlabel("Time")
+                plt.ylabel("Station")
+                plt.title("Train schedule")
+                plt.legend()
+                plt.grid()
+                plt.tight_layout()
+                if save_fig:
+                    plt.savefig(file_name)
+                plt.show()
+                plt.close()
         return actual_times_df
 
     def calculate_avg_section_times(self):
@@ -489,7 +498,7 @@ if __name__ == "__main__":
     # 把只有train_id为T2的列车时间提取出来
     # schedule = [item for item in schedule if item['train_id'] == 'T2' or item['train_id'] == 'T3']
     # 运行仿真
-    for each_simu in range(10):
+    for each_simu in range(1):
         simulator = TrainSimulator(schedule)
         simulator.simulate()
         actual_times_df = simulator.plot_schedule(draw_planned=False, draw_actual=True)  # draw_planned=True 绘制计划图
