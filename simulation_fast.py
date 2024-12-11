@@ -15,7 +15,7 @@ event_counter = count()
 
 
 class TrainSimulator:
-    def __init__(self, schedule, low=0, high=5):
+    def __init__(self, schedule, low=0, high=5, min_wait=None, min_dur=None, station_seq=None, fig_path=None, ini_delay=None):
         """
         初始化列车仿真器
         :param schedule: 列车时刻表，格式为列表，每个元素是一个字典
@@ -29,13 +29,25 @@ class TrainSimulator:
         self.low = low  # 最低延误分钟数
         self.high = high  # 最高延误分钟数
         self.continue_plot = False  # 连续绘图标志位
+        self.fig_path = fig_path
+        self.min_dur = min_dur
+        self.min_wait = min_wait
+        self.station_seq = station_seq
+        if ini_delay is None:
+            self.ini_delay = []
+            self.delay_load = True
+        else:
+            self.ini_delay = pd.DataFrame(ini_delay)
+            self.delay_load = False
 
+        # 随机冲schedule里选一个
+        self.event = np.random.choice(schedule)
         # 初始化事件队列
         for item in schedule:
             train_id = item["train_id"]
             dep_time = datetime.strptime(item["departure_time"], "%H:%M:%S")
             # 离开时间里加入随机的秒，避免多个列车同时发车
-            dep_time += timedelta(seconds=random.randint(1, 59))
+            # dep_time += timedelta(seconds=random.randint(1, 59))
             arr_time = datetime.strptime(item["arrival_time"], "%H:%M:%S")
             sequence = next(event_counter)  # 获取当前事件的序列号
             heapq.heappush(self.events, (dep_time, sequence, "depart", train_id, item))
@@ -129,13 +141,42 @@ class TrainSimulator:
         # 计算实际到达时间（加上一个随机干扰）
         # delay = random.randint(self.low, self.high)  # 随机延误，单位分钟
         # 加入服从对数正态分布的随机干扰
-        delay = np.random.lognormal(2.76695, 1.18678*3)//60  # 单位分钟
-        if delay < self.low:
-            delay = self.low
-        elif delay > self.high:
-            delay = self.high
+        # if self.event['train_id'] == train_id and self.event['start'] == section[0]:
+        #     # delay = np.random.lognormal(2.76695, 1.18678)//60  # 单位分钟
+        #     delay = random.randint(self.low, self.high)  # 随机延误，单位分钟
+        #     if delay < self.low:
+        #         delay = self.low
+        #     elif delay > self.high:
+        #         delay = self.high
+        #     print('##### train {} will delay in section {} {} minutes'.format(self.event['train_id'],
+        #                                                                       self.event['start'], delay))
+        # else:
+        #     delay = 0.
 
-        actual_arrival_time = planned_departure_time + planned_operation_time + timedelta(minutes=delay)  # 按照计划来跑，不存在最短运行时间，赶点的情况
+        if self.delay_load:
+            delay = np.random.lognormal(2.76695, 1.18678) // 60  # 单位分钟
+            self.ini_delay.append({
+                "train_id": train_id,
+                "event": "delay",
+                "time": delay,
+                "station": section[1],
+            })
+        else:
+            # find the delay from the ini_delay
+            filtered = self.ini_delay[(self.ini_delay['train_id'] == train_id) & (self.ini_delay['station'] == section[1])]
+            delay = filtered['time'].iloc[0] if not filtered.empty else None
+
+        minimum_operation_time = self.min_dur[int(section[0])-1]
+
+        # 实际区间运行时间，
+        # if delay == 0:
+        actual_arrival_time = np.max([planned_headway, planned_departure_time + timedelta(minutes=minimum_operation_time), planned_arrival_time])
+        actual_arrival_time += timedelta(minutes=delay)
+        # else:
+        #     actual_arrival_time = planned_departure_time + planned_operation_time + timedelta(minutes=delay)  # 按照计划来跑，不存在最短运行时间，赶点的情况
+        #     # 保证列车下一站的到站时间大于计划时间，
+        #     if actual_arrival_time < planned_headway:
+        #         actual_arrival_time = planned_headway
 
         # 检查到站间隔约束（与前一列车至少相隔 3 分钟）
         for log in reversed(self.logs):
@@ -145,12 +186,8 @@ class TrainSimulator:
                     actual_arrival_time = last_arrival_time + timedelta(minutes=3)
                 break
 
-        # 保证列车下一站的到站时间大于计划时间，
-        if actual_arrival_time < planned_headway:
-            actual_arrival_time = planned_headway
-
         # 添加到站事件
-        actual_arrival_time += timedelta(seconds=random.randint(1, 59))
+        # actual_arrival_time += timedelta(seconds=random.randint(1, 59))
         sequence = next(event_counter)  # 获取当前事件的序列号
         heapq.heappush(self.events, (actual_arrival_time, sequence, "arrive", train_id, event_data))
         self.trains[train_id]["next_arrival_time"] = actual_arrival_time
@@ -180,7 +217,8 @@ class TrainSimulator:
         self.trains[train_id]["status"] = "waiting"
 
         # 确保最短停站时间（2 分钟）
-        next_departure_time = self.current_time + timedelta(minutes=2)
+        wait = self.min_wait[train_id].iloc[int(section[1])-1]
+        next_departure_time = self.current_time + timedelta(minutes=float(wait))
 
         # 根据当前列车编号以及当前车站，查找下一个区间的对应的发车事件
         for item in self.schedule:
@@ -202,8 +240,8 @@ class TrainSimulator:
                         if planned_next_departure < last_depart_time + timedelta(minutes=3):
                             planned_next_departure = last_depart_time + timedelta(minutes=3)
                         break
-
-                planed_next_arrival = planed_next_operation_time + planned_next_departure
+                minimum_operation_time = self.min_dur[int(section[1])-1]
+                planed_next_arrival = np.max([timedelta(minutes=float(minimum_operation_time)) + planned_next_departure, planed_next_arrival])
                 # 保证新生成的事件的到站时间满足越行约束
                 for events in reversed(self.events):
                     if events[2] == "depart" and events[4]["end"] == next_end and events[3] != train_id:
@@ -215,7 +253,7 @@ class TrainSimulator:
 
                 # 更新事件队列中相关的发车事件
                 sequence = next(event_counter)  # 获取当前事件的序列号
-                planned_next_departure += timedelta(seconds=random.randint(1, 59))
+                # planned_next_departure += timedelta(seconds=random.randint(1, 59))
                 new_event = (planned_next_departure, sequence, "depart", train_id, {
                     "start": next_start,
                     "end": next_end,
@@ -233,13 +271,14 @@ class TrainSimulator:
 
                 break
 
-    def plot_schedule(self, draw_planned=True, draw_actual=True, dynamic_y=True, save_fig=False, file_name='train_schedule.png', line_type='-'):
+    def plot_schedule(self, draw_planned=True, draw_actual=True, dynamic_y=True, save_fig=False, file_name2=None,
+                      file_name='train_schedule.png', line_type='-', first_station_time=None):
         """
         绘制列车运行时刻表，包括计划图和实际图，同时标记延误信息。
         同一列车的计划图和实际图使用一致的颜色。
         """
         if (draw_planned or draw_actual) and not self.continue_plot:
-             plt.figure(figsize=(14, 7))
+             plt.figure(figsize=(14, 8))
         stations = list(set([event["station"] for event in self.logs]))
         stations = np.sort([int(stations[i]) for i in range(len(stations))])
         stations = [str(i) for i in stations]
@@ -280,6 +319,7 @@ class TrainSimulator:
                 if event["train_id"] == train_id:
                     actual_times.append(event["time"])
                     actual_times_hms.append(event["time"].strftime("%H:%M:%S"))
+
                     if not dynamic_y:
                         actual_positions.append(stations.index(event["station"]))
                     else:
@@ -289,11 +329,16 @@ class TrainSimulator:
                     planned_time = datetime.strptime(event["planned_time"], "%H:%M:%S")
                     delay = (event["time"] - planned_time).total_seconds() / 60
                     delays.append(delay)
-
+                    if len(planned_times) == 0 and first_station_time is not None:
+                        planned_times.append(first_station_time[train_id])
                     planned_times.append(planned_time)
                     if not dynamic_y:
+                        if len(planned_positions) == 0 and first_station_time is not None:
+                            planned_positions.append(stations.index(event["station"]))
                         planned_positions.append(stations.index(event["station"]))
                     else:
+                        if len(planned_positions) == 0 and first_station_time is not None:
+                            planned_positions.append(stations_offsets[event["station"]])
                         planned_positions.append(stations_offsets[event["station"]])
 
             # 获取该列车的颜色
@@ -301,11 +346,18 @@ class TrainSimulator:
 
             # 绘制计划图（虚线）
             if draw_planned:
-                plt.plot(planned_times, planned_positions, linestyle=line_type, color=train_color, label=f"{train_id}")  # - plan
+                if train_id == 'T2' and not self.continue_plot :
+                    linewidth = 3
+                    plt.plot(planned_times, planned_positions, marker='o', markersize=10, linestyle=line_type, linewidth=linewidth,
+                             color=train_color, label=f"{train_id}")
+                else:
+                    linewidth = 2
+                    plt.plot(planned_times, planned_positions, linestyle=line_type, linewidth=linewidth,
+                             color=train_color, label=f"{train_id}") # - plan
 
             # 绘制实际图（实线）
             if draw_actual:
-                plt.plot(actual_times, actual_positions, marker='o', color=train_color, label=f"{train_id} - actual")
+                plt.plot(actual_times, actual_positions, marker='o', markersize=6, color=train_color, linewidth=2, label=f"{train_id} - actual")
 
             # 将实际到达时间转换为Series并添加到DataFrame中
             # 使用车站索引作为行索引，列车ID作为列名
@@ -334,35 +386,46 @@ class TrainSimulator:
             if draw_actual:
                 for t, p, d in zip(actual_times, actual_positions, delays):
                     if d > 0:
-                        plt.text(t, p, f"+{int(d)}'", color="red", fontsize=9, ha='left', va='bottom')
+                        plt.text(t, p, f"+{int(d)}'", color="red", fontsize=9, ha='left', va='bottom', fontweight='bold')
                     elif d < 0:
-                        plt.text(t, p, f"{int(d)}'", color="blue", fontsize=9, ha='left', va='bottom')
+                        plt.text(t, p, f"{int(d)}'", color="blue", fontsize=9, ha='left', va='bottom', fontweight='bold')
 
         # 格式化横坐标时间
         if draw_planned or draw_actual and not self.continue_plot:
-            min_time = min(event["time"] for event in self.logs).replace(second=0, microsecond=0)
-            max_time = max(event["time"] for event in self.logs).replace(second=0, microsecond=0)
-            time_range = pd.date_range(min_time, max_time, freq="10T")  # 1分钟间隔
+            plt.rcParams['font.size'] = 12
+            min_time = min(event["time"] for event in self.logs).replace(minute=0, second=0, microsecond=0)
+            max_time = max(event["time"] for event in self.logs).replace(minute=0, second=0, microsecond=0)
+            # 取整点，
+            time_range = pd.date_range(min_time, max_time + timedelta(minutes=50), freq="20min")  # 1分钟间隔
             plt.gca().set_xticks(time_range)
+            plt.xticks(fontsize=20)  # 设置字体大小为 14
             plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
 
             # plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
             # plt.gca().xaxis.set_major_locator(mdates.MinuteLocator(interval=10))  # 10分钟间隔
 
             if not dynamic_y:
-                plt.yticks(range(len(stations)), stations)
+                plt.yticks(range(len(stations)), stations, font_size=12)
             else:
                 plt.yticks([stations_offsets[station] for station in stations], stations)
             if file_name is not None:
-                plt.xlabel("Time")
-                plt.ylabel("Station")
-                plt.title("Train schedule")
-                plt.legend()
-                plt.grid()
-                plt.tight_layout()
+                # 绘制图例
+                plt.xlabel("Time", fontsize=20)
+                plt.ylabel("Station", fontsize=20)
+                plt.title(r"Rescheduled by {}".format(file_name[:-4]), fontsize=20)
+                plt.legend(fontsize=12, loc='upper left', title="Train ID", title_fontsize=14)
+                plt.grid(True, linestyle='--', alpha=0.6)
+                # plt.tight_layout()
+                if self.station_seq is not None:
+                    plt.gca().set_yticklabels(self.station_seq)
+                    plt.gca().tick_params(axis='y', labelsize=14)
+
                 if save_fig:
-                    plt.savefig(file_name)
-                plt.show()
+                    # 修改，将图片保存到plan_vs_actual里
+                    plt.savefig(self.fig_path + 'plan_vs_actual/' + file_name2)
+                    # plt.savefig(file_name)
+
+                plt.show(block=True)
                 plt.close()
         return actual_times_df
 
